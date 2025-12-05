@@ -1,11 +1,10 @@
-// LockManager.hpp
 #ifndef LOCK_MANAGER_HPP
 #define LOCK_MANAGER_HPP
 
 #include "protocol.hpp"
 #include <condition_variable>
+#include <iostream>
 #include <mutex>
-#include <print>
 #include <string>
 #include <unordered_map>
 
@@ -27,7 +26,6 @@ public:
     std::unique_lock<std::mutex> lock(global_mutex);
     ResourceState &state = resources[resource];
 
-    // Simple string comparison using constants
     if (mode == Protocol::MODE_WRITE) {
       while (state.mode != UNLOCKED) {
         state.cv.wait(lock);
@@ -40,12 +38,13 @@ public:
       state.mode = READ;
       state.active_readers++;
     }
-    std::println("[LOG] Locked {} in {} mode.", resource, mode);
+    std::cout << "[LOG] Locked " << resource << " in " << mode << " mode."
+              << std::endl;
   }
 
   void release(const std::string &resource) {
     std::unique_lock<std::mutex> lock(global_mutex);
-    if (!resources.contains(resource))
+    if (resources.find(resource) == resources.end())
       return;
 
     ResourceState &state = resources[resource];
@@ -57,7 +56,7 @@ public:
         state.mode = UNLOCKED;
     }
 
-    std::println("[LOG] Released {}.", resource);
+    std::cout << "[LOG] Released " << resource << "." << std::endl;
     state.cv.notify_all();
   }
 };

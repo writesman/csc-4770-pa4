@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++23 -pthread # Use -std=c++17 if c++23 fails
+CXXFLAGS = -std=c++17 -pthread
 LDFLAGS = -lzmq
 
 all: lock_server lock_client
