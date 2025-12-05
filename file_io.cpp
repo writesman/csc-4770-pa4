@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 
+// Writes content to disk, truncating the file if it exists.
 void write_to_disk(const std::string &filename, const std::string &data) {
   std::ofstream outfile(filename, std::ios::trunc);
   if (!outfile) {
@@ -11,6 +12,7 @@ void write_to_disk(const std::string &filename, const std::string &data) {
   outfile << data;
 }
 
+// Reads the entire content of a file into a single string.
 std::string read_from_disk(const std::string &filename) {
   std::ifstream infile(filename);
   if (!infile)
