@@ -31,8 +31,6 @@ public:
     } else {
       mtx->lock_shared();
     }
-
-    std::cout << "[SERVER] Locked: " << resource << " (" << mode << ")\n";
   }
 
   void release(const std::string &resource, const std::string &mode) {
@@ -43,8 +41,6 @@ public:
     } else {
       mtx->unlock_shared();
     }
-
-    std::cout << "[SERVER] Released: " << resource << "\n";
   }
 };
 

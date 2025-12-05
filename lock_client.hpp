@@ -3,7 +3,6 @@
 
 #include "protocol.hpp"
 #include <string>
-#include <string_view>
 #include <zmq.hpp>
 
 class LockClient {
@@ -16,14 +15,15 @@ public:
     sock.connect("tcp://localhost:5555");
   }
 
-  bool send_request(std::string_view cmd, std::string_view res,
-                    std::string_view mode) {
-    std::string msg =
-        std::string(cmd) + " " + std::string(res) + " " + std::string(mode);
+  bool send_request(const std::string &cmd, const std::string &res,
+                    const std::string &mode) {
+    Protocol::LockRequest req{cmd, res, mode};
+    std::string msg = req.to_string();
+
     sock.send(zmq::buffer(msg), zmq::send_flags::none);
 
     zmq::message_t reply;
-    sock.recv(reply, zmq::recv_flags::none);
+    (void)sock.recv(reply, zmq::recv_flags::none);
 
     return reply.to_string() == Protocol::MSG_OK;
   }

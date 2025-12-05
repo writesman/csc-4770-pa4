@@ -2,13 +2,17 @@ CXX = g++
 CXXFLAGS = -std=c++17 -pthread
 LDFLAGS = -lzmq
 
+SERVER_OBJS = lock_server.cpp session_registry.cpp
+
+CLIENT_OBJS = lock_client.cpp file_io.cpp
+
 all: lock_server lock_client
 
-lock_server: lock_server.cpp
-	$(CXX) $(CXXFLAGS) -o lock_server lock_server.cpp $(LDFLAGS)
+lock_server: $(SERVER_OBJS)
+	$(CXX) $(CXXFLAGS) -o lock_server $^ $(LDFLAGS)
 
-lock_client: lock_client.cpp
-	$(CXX) $(CXXFLAGS) -o lock_client lock_client.cpp $(LDFLAGS)
+lock_client: $(CLIENT_OBJS)
+	$(CXX) $(CXXFLAGS) -o lock_client $^ $(LDFLAGS)
 
 clean:
 	rm -f lock_server lock_client
