@@ -1,13 +1,15 @@
 // lock_client.cpp
-#include <iostream>
+#include <cstdio>
+#include <print>
 #include <string>
 #include <unistd.h> // for sleep
 #include <zmq.hpp>
 
 int main(int argc, char *argv[]) {
   if (argc < 3) {
-    std::cerr << "Usage: " << argv[0]
-              << " <resource_name> <mode> [message] [sleep_time]" << std::endl;
+    std::println(stderr,
+                 "Usage: {} <resource_name> <mode> [message] [sleep_time]",
+                 argv[0]);
     return 1;
   }
 
@@ -19,14 +21,12 @@ int main(int argc, char *argv[]) {
   zmq::context_t ctx(1);
   zmq::socket_t sock(ctx, zmq::socket_type::req);
 
-  std::cout << "CONNECTING to lock server at tcp://localhost:5555..."
-            << std::endl;
+  std::println("CONNECTING to lock server at tcp://localhost:5555...");
   sock.connect("tcp://localhost:5555");
 
   // 1. Request Lock
   std::string req_str = "LOCK " + resource + " " + mode;
-  std::cout << "REQUESTING lock for resource: " << resource << " (" << mode
-            << ")" << std::endl;
+  std::println("REQUESTING lock for resource: {} ({}).", resource, mode);
 
   sock.send(zmq::buffer(req_str), zmq::send_flags::none);
 
@@ -36,33 +36,30 @@ int main(int argc, char *argv[]) {
   std::string reply_str(static_cast<char *>(reply.data()), reply.size());
 
   if (reply_str == "OK") {
-    std::cout << "LOCKED " << resource << std::endl;
+    std::println("LOCKED {}.", resource);
 
     // 2. Critical Section
     if (mode == "WRITE") {
       if (sleep_time > 0) {
-        std::cout << "Sleeping for " << sleep_time << " seconds before WRITE..."
-                  << std::endl;
+        std::println("Sleeping for {} seconds before WRITE...", sleep_time);
         sleep(sleep_time);
       }
-      std::cout << "WRITING value to " << resource << ": " << content
-                << std::endl;
+      std::println("WRITING value to {}: {}.", resource, content);
     } else {
-      std::cout << "READING value from " << resource << " (simulated)"
-                << std::endl;
+      std::println("READING value from {}: (simulated).", resource);
       if (sleep_time > 0)
         sleep(sleep_time);
     }
 
     // 3. Release Lock
-    std::cout << "RELEASING lock for resource: " << resource << std::endl;
+    std::println("RELEASING lock for resource: {}.", resource);
     std::string unlock_str = "UNLOCK " + resource + " " + mode;
     sock.send(zmq::buffer(unlock_str), zmq::send_flags::none);
 
     sock.recv(reply, zmq::recv_flags::none); // Wait for ACK
-    std::cout << "UNLOCKED " << resource << std::endl;
+    std::println("UNLOCKED {}.", resource);
   } else {
-    std::cerr << "Failed to acquire lock." << std::endl;
+    std::println(stderr, "Failed to acquire lock,");
   }
 
   return 0;

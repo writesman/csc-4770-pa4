@@ -1,12 +1,11 @@
 #include <chrono> // Added for sleep
 #include <condition_variable>
-#include <iostream>
 #include <mutex>
+#include <print>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
-#include <vector>
 #include <zmq.hpp>
 
 // --- LOCK MANAGER ---
@@ -45,8 +44,7 @@ public:
       state.mode = READ;
       state.active_readers++;
     }
-    std::cout << "[LOG] Locked " << resource << " in " << mode << " mode."
-              << std::endl;
+    std::println("[LOG] Locked {} in {} mode.", resource, mode);
   }
 
   void release(const std::string &resource) {
@@ -63,7 +61,7 @@ public:
         state.mode = UNLOCKED;
     }
 
-    std::cout << "[LOG] Released " << resource << std::endl;
+    std::println("[LOG] Released {}.", resource);
 
     // Wake up everyone waiting on this resource
     state.cv.notify_all();
@@ -133,7 +131,7 @@ int main() {
   zmq::socket_t backend(ctx, zmq::socket_type::router);
   backend.bind("inproc://backend");
 
-  std::cout << "Lock Server started on tcp://*:5555" << std::endl;
+  std::println("Lock Server started on tcp://*:5555");
 
   std::unordered_map<std::string, std::string> affinity;
   int worker_count = 0;
@@ -160,7 +158,7 @@ int main() {
         affinity[client_str] = worker_id;
 
         std::thread(worker_thread, &ctx, worker_id).detach();
-        std::cout << "Spawned " << worker_id << " for new client." << std::endl;
+        std::println("Spawned {} for new client.", worker_id);
 
         // --- THE FIX: WAIT FOR CONNECTION ---
         // Give the new thread 100ms to start and connect to 'inproc://backend'.
