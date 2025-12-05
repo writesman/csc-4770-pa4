@@ -11,45 +11,39 @@
 #include <utility>
 #include <zmq.hpp>
 
-// --- Shared Global State ---
-
 struct LockState {
   bool locked = false;
-  std::string owner; // identity string of the client holding the lock
-  std::deque<std::string> waiters; // identities waiting (FIFO)
-  std::string value;               // optional stored value
+  std::string owner;
+  std::deque<std::string> waiters;
+  std::string value;
 };
 
 std::unordered_map<std::string, LockState> lock_table;
 std::mutex table_mtx;
 
-// Outgoing message queue: {client_identity, payload}
-// We need this because one request (RELEASE) might trigger multiple replies
-// (OK to owner, GRANTED to waiter), or zero replies (ACQUIRE blocked).
 std::deque<std::pair<std::string, std::string>> response_queue;
 std::mutex queue_mtx;
 
-// Helper to push responses from workers
 void enqueue_response(const std::string &client_id,
                       const std::string &payload) {
   std::lock_guard<std::mutex> lk(queue_mtx);
   response_queue.push_back({client_id, payload});
 }
 
-// Helper to trim strings
 std::string trim(const std::string &s) {
   size_t a = s.find_first_not_of(' ');
+
   if (a == std::string::npos)
     return "";
+
   size_t b = s.find_last_not_of(' ');
+
   return s.substr(a, b - a + 1);
 }
 
-// --- Worker Thread ---
-// Handles all logic for a specific client.
 struct WorkerInfo {
   std::string client_id;
-  zmq::socket_t socket; // PAIR socket to talk to Main
+  zmq::socket_t socket;
 };
 
 void worker_thread(zmq::context_t *ctx, std::string endpoint,
@@ -73,11 +67,13 @@ void worker_thread(zmq::context_t *ctx, std::string endpoint,
     } else if (cmd == "ACQUIRE") {
       std::string resource;
       iss >> resource;
+
       if (resource.empty()) {
         enqueue_response(client_id, "ERROR missing_resource");
       } else {
         std::unique_lock<std::mutex> lk(table_mtx);
         auto &ls = lock_table[resource];
+
         if (!ls.locked) {
           ls.locked = true;
           ls.owner = client_id;
@@ -102,6 +98,7 @@ void worker_thread(zmq::context_t *ctx, std::string endpoint,
       } else {
         // Release lock
         LockState &ls = it->second;
+
         if (!ls.waiters.empty()) {
           // Hand over to next waiter
           std::string next_client = ls.waiters.front();
@@ -127,6 +124,7 @@ void worker_thread(zmq::context_t *ctx, std::string endpoint,
 
       std::unique_lock<std::mutex> lk(table_mtx);
       auto &ls = lock_table[resource];
+
       if (!ls.locked || ls.owner != client_id) {
         enqueue_response(client_id, "ERROR not_owner");
       } else {
