@@ -33,11 +33,15 @@ public:
 
     if (mode == "WRITE") {
       // Writers wait for EVERYTHING to be clear
-      state.cv.wait(lock, [&state] { return state.mode == UNLOCKED; });
+      while (state.mode != UNLOCKED) {
+        state.cv.wait(lock);
+      }
       state.mode = WRITE;
     } else if (mode == "READ") {
       // Readers wait only if there is a WRITER
-      state.cv.wait(lock, [&state] { return state.mode != WRITE; });
+      while (state.mode == WRITE) {
+        state.cv.wait(lock);
+      }
       state.mode = READ;
       state.active_readers++;
     }

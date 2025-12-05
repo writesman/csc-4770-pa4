@@ -8,8 +8,6 @@ int main(int argc, char *argv[]) {
   if (argc < 3) {
     std::cerr << "Usage: " << argv[0]
               << " <resource_name> <mode> [message] [sleep_time]" << std::endl;
-    std::cerr << "Example: " << argv[0] << " file_A WRITE 'Hello World' 5"
-              << std::endl;
     return 1;
   }
 
@@ -32,7 +30,7 @@ int main(int argc, char *argv[]) {
 
   sock.send(zmq::buffer(req_str), zmq::send_flags::none);
 
-  // Block until we get the lock (Server handles the waiting)
+  // This RECV blocks until the Server (Worker Thread) says "OK"
   zmq::message_t reply;
   sock.recv(reply, zmq::recv_flags::none);
   std::string reply_str(static_cast<char *>(reply.data()), reply.size());
@@ -40,7 +38,7 @@ int main(int argc, char *argv[]) {
   if (reply_str == "OK") {
     std::cout << "LOCKED " << resource << std::endl;
 
-    // 2. Critical Section (Simulated)
+    // 2. Critical Section
     if (mode == "WRITE") {
       if (sleep_time > 0) {
         std::cout << "Sleeping for " << sleep_time << " seconds before WRITE..."
