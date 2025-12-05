@@ -36,8 +36,8 @@ int main() {
       // 1. Receive multi-part message [Client ID | Empty | Payload]
       if (!frontend.recv(client_id, zmq::recv_flags::none))
         continue;
-      (void)frontend.recv(empty, zmq::recv_flags::none);
-      (void)frontend.recv(payload, zmq::recv_flags::none);
+      frontend.recv(empty, zmq::recv_flags::none);
+      frontend.recv(payload, zmq::recv_flags::none);
 
       std::string client_key = client_id.to_string();
 
@@ -58,10 +58,10 @@ int main() {
       zmq::message_t worker_id, client_id, empty, reply;
 
       // 1. Receive reply frames: [Worker ID | Client ID | Empty | Reply]
-      (void)backend.recv(worker_id, zmq::recv_flags::none);
-      (void)backend.recv(client_id, zmq::recv_flags::none);
-      (void)backend.recv(empty, zmq::recv_flags::none);
-      (void)backend.recv(reply, zmq::recv_flags::none);
+      backend.recv(worker_id, zmq::recv_flags::none);
+      backend.recv(client_id, zmq::recv_flags::none);
+      backend.recv(empty, zmq::recv_flags::none);
+      backend.recv(reply, zmq::recv_flags::none);
 
       // 2. Route final reply back to the client via frontend: [Client ID |
       // Empty | Reply]
