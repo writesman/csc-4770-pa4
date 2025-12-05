@@ -1,5 +1,6 @@
 #include <chrono> // Added for sleep
 #include <condition_variable>
+#include <format>
 #include <mutex>
 #include <print>
 #include <sstream>
@@ -49,7 +50,7 @@ public:
 
   void release(const std::string &resource) {
     std::unique_lock<std::mutex> lock(global_mutex);
-    if (resources.find(resource) == resources.end())
+    if (!resources.contains(resource))
       return;
 
     ResourceState &state = resources[resource];
@@ -93,8 +94,7 @@ void worker_thread(zmq::context_t *ctx, std::string worker_identity) {
       break;
     }
 
-    std::string req_str(static_cast<char *>(payload_msg.data()),
-                        payload_msg.size());
+    std::string req_str = payload_msg.to_string();
     std::stringstream ss(req_str);
     std::string command, resource, mode;
     ss >> command >> resource >> mode;
@@ -149,12 +149,11 @@ int main() {
       frontend.recv(empty, zmq::recv_flags::none);
       frontend.recv(payload, zmq::recv_flags::none);
 
-      std::string client_str(static_cast<char *>(client_id.data()),
-                             client_id.size());
+      std::string client_str = client_id.to_string();
 
       // If this is a new client, spawn a worker
-      if (affinity.find(client_str) == affinity.end()) {
-        std::string worker_id = "worker-" + std::to_string(++worker_count);
+      if (!affinity.contains(client_str)) {
+        std::string worker_id = std::format("worker-{}", ++worker_count);
         affinity[client_str] = worker_id;
 
         std::thread(worker_thread, &ctx, worker_id).detach();

@@ -1,5 +1,6 @@
 // lock_client.cpp
 #include <cstdio>
+#include <format>
 #include <print>
 #include <string>
 #include <unistd.h> // for sleep
@@ -25,7 +26,7 @@ int main(int argc, char *argv[]) {
   sock.connect("tcp://localhost:5555");
 
   // 1. Request Lock
-  std::string req_str = "LOCK " + resource + " " + mode;
+  std::string req_str = std::format("LOCK {} {}", resource, mode);
   std::println("REQUESTING lock for resource: {} ({}).", resource, mode);
 
   sock.send(zmq::buffer(req_str), zmq::send_flags::none);
@@ -33,7 +34,7 @@ int main(int argc, char *argv[]) {
   // This RECV blocks until the Server (Worker Thread) says "OK"
   zmq::message_t reply;
   sock.recv(reply, zmq::recv_flags::none);
-  std::string reply_str(static_cast<char *>(reply.data()), reply.size());
+  std::string reply_str = reply.to_string();
 
   if (reply_str == "OK") {
     std::println("LOCKED {}.", resource);
@@ -53,7 +54,7 @@ int main(int argc, char *argv[]) {
 
     // 3. Release Lock
     std::println("RELEASING lock for resource: {}.", resource);
-    std::string unlock_str = "UNLOCK " + resource + " " + mode;
+    std::string unlock_str = std::format("UNLOCK {} {}", resource, mode);
     sock.send(zmq::buffer(unlock_str), zmq::send_flags::none);
 
     sock.recv(reply, zmq::recv_flags::none); // Wait for ACK
