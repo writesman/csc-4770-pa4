@@ -1,4 +1,3 @@
-#include <chrono> // Added for sleep
 #include <condition_variable>
 #include <format>
 #include <mutex>
@@ -80,6 +79,9 @@ void worker_thread(zmq::context_t *ctx, std::string worker_identity) {
   socket.set(zmq::sockopt::routing_id, worker_identity);
   socket.connect("inproc://backend");
 
+  zmq::message_t ready_msg("READY", 5);
+  socket.send(ready_msg, zmq::send_flags::none);
+
   while (true) {
     // 1. Receive Request: [Client_ID][Empty][Payload]
     zmq::message_t client_id_msg, empty_msg, payload_msg;
@@ -159,10 +161,9 @@ int main() {
         std::thread(worker_thread, &ctx, worker_id).detach();
         std::println("Spawned {} for new client.", worker_id);
 
-        // --- THE FIX: WAIT FOR CONNECTION ---
-        // Give the new thread 100ms to start and connect to 'inproc://backend'.
-        // Without this, the server sends the message into the void.
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        zmq::message_t worker_id_frame, ready_msg;
+        backend.recv(worker_id_frame, zmq::recv_flags::none);
+        backend.recv(ready_msg, zmq::recv_flags::none);
       }
 
       std::string target_worker = affinity[client_str];
