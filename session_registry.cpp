@@ -4,10 +4,10 @@
 #include <thread>
 
 // --- WORKER LOGIC DEFINITION ---
-void worker_task(zmq::context_t *ctx, std::string worker_id,
-                 LockManager *manager) {
+void handle_worker_session(zmq::context_t *ctx, std::string session_worker_id,
+                           LockManager *manager) {
   zmq::socket_t socket(*ctx, zmq::socket_type::dealer);
-  socket.set(zmq::sockopt::routing_id, worker_id);
+  socket.set(zmq::sockopt::routing_id, session_worker_id);
   socket.connect("inproc://backend");
 
   socket.send(zmq::buffer(Protocol::MSG_READY), zmq::send_flags::none);
@@ -46,18 +46,19 @@ SessionRegistry::SessionRegistry(zmq::context_t *context, LockManager *mgr)
 
 std::string SessionRegistry::get_worker_for_client(const std::string &client_id,
                                                    zmq::socket_t &backend) {
-  if (affinity_map.count(client_id)) {
-    return affinity_map[client_id];
+  if (affinity_map.find(client_id) != affinity_map.end()) {
+    return affinity_map.at(client_id);
   }
 
-  std::string new_worker_id = "worker_" + std::to_string(++worker_seq);
-  affinity_map[client_id] = new_worker_id;
+  std::string new_session_worker_id = "worker_" + std::to_string(++worker_seq);
+  affinity_map[client_id] = new_session_worker_id;
 
-  std::thread(worker_task, ctx, new_worker_id, manager).detach();
+  std::thread(handle_worker_session, ctx, new_session_worker_id, manager)
+      .detach();
 
   zmq::message_t w_id, w_ready;
   (void)backend.recv(w_id, zmq::recv_flags::none);
   (void)backend.recv(w_ready, zmq::recv_flags::none);
 
-  return new_worker_id;
+  return new_session_worker_id;
 }

@@ -6,9 +6,8 @@
 #include <unordered_map>
 #include <zmq.hpp>
 
-// Declaration of the worker routine
-void worker_task(zmq::context_t *ctx, std::string worker_id,
-                 LockManager *manager);
+void handle_worker_session(zmq::context_t *ctx, std::string session_worker_id,
+                           LockManager *manager);
 
 class SessionRegistry {
 private:
