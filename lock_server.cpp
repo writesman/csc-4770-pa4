@@ -1,3 +1,4 @@
+#include "protocol.hpp"
 #include <condition_variable>
 #include <format>
 #include <mutex>
@@ -30,13 +31,13 @@ public:
     // Ensure resource entry exists
     ResourceState &state = resources[resource];
 
-    if (mode == "WRITE") {
+    if (mode == Protocol::MODE_WRITE) {
       // Writers wait for EVERYTHING to be clear
       while (state.mode != UNLOCKED) {
         state.cv.wait(lock);
       }
       state.mode = WRITE;
-    } else if (mode == "READ") {
+    } else if (mode == Protocol::MODE_READ) {
       // Readers wait only if there is a WRITER
       while (state.mode == WRITE) {
         state.cv.wait(lock);
@@ -79,7 +80,8 @@ void worker_thread(zmq::context_t *ctx, std::string worker_identity) {
   socket.set(zmq::sockopt::routing_id, worker_identity);
   socket.connect("inproc://backend");
 
-  zmq::message_t ready_msg("READY", 5);
+  zmq::message_t ready_msg(Protocol::MSG_READY.data(),
+                           Protocol::MSG_READY.size());
   socket.send(ready_msg, zmq::send_flags::none);
 
   while (true) {
@@ -101,16 +103,14 @@ void worker_thread(zmq::context_t *ctx, std::string worker_identity) {
     std::string command, resource, mode;
     ss >> command >> resource >> mode;
 
-    std::string reply_str = "ERROR";
+    std::string reply_str = std::string(Protocol::MSG_ERROR);
 
-    if (command == "LOCK") {
-      // This call BLOCKS if the lock is busy.
-      // Only this thread blocks; the Main Thread keeps running.
+    if (command == Protocol::CMD_LOCK) {
       lock_manager.acquire(resource, mode);
-      reply_str = "OK";
-    } else if (command == "UNLOCK") {
+      reply_str = Protocol::MSG_OK;
+    } else if (command == Protocol::CMD_UNLOCK) {
       lock_manager.release(resource);
-      reply_str = "OK";
+      reply_str = Protocol::MSG_OK;
     }
 
     // 2. Send Reply: [Client_ID][Empty][Reply]

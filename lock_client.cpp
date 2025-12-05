@@ -1,4 +1,5 @@
 // lock_client.cpp
+#include "protocol.hpp"
 #include <cstdio>
 #include <format>
 #include <print>
@@ -26,7 +27,8 @@ int main(int argc, char *argv[]) {
   sock.connect("tcp://localhost:5555");
 
   // 1. Request Lock
-  std::string req_str = std::format("LOCK {} {}", resource, mode);
+  std::string req_str =
+      std::format("{} {} {}", Protocol::CMD_LOCK, resource, mode);
   std::println("REQUESTING lock for resource: {} ({}).", resource, mode);
 
   sock.send(zmq::buffer(req_str), zmq::send_flags::none);
@@ -36,11 +38,11 @@ int main(int argc, char *argv[]) {
   sock.recv(reply, zmq::recv_flags::none);
   std::string reply_str = reply.to_string();
 
-  if (reply_str == "OK") {
+  if (reply_str == Protocol::MSG_OK) {
     std::println("LOCKED {}.", resource);
 
     // 2. Critical Section
-    if (mode == "WRITE") {
+    if (mode == Protocol::MODE_WRITE) {
       if (sleep_time > 0) {
         std::println("Sleeping for {} seconds before WRITE...", sleep_time);
         sleep(sleep_time);
@@ -54,7 +56,8 @@ int main(int argc, char *argv[]) {
 
     // 3. Release Lock
     std::println("RELEASING lock for resource: {}.", resource);
-    std::string unlock_str = std::format("UNLOCK {} {}", resource, mode);
+    std::string unlock_str =
+        std::format("{} {} {}", Protocol::CMD_UNLOCK, resource, mode);
     sock.send(zmq::buffer(unlock_str), zmq::send_flags::none);
 
     sock.recv(reply, zmq::recv_flags::none); // Wait for ACK
