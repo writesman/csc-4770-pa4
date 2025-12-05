@@ -1,224 +1,194 @@
-// lock_server.cpp
-// Build: g++ -std=c++17 -O2 -pthread lock_server.cpp -lzmq -o lock_server
-
-#include <deque>
+#include <chrono> // Added for sleep
+#include <condition_variable>
 #include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
-#include <utility>
+#include <vector>
 #include <zmq.hpp>
 
-struct LockState {
-  bool locked = false;
-  std::string owner;
-  std::deque<std::string> waiters;
-  std::string value;
+// --- LOCK MANAGER ---
+// Keeps track of who owns what resource. Thread-safe.
+enum LockMode { UNLOCKED, READ, WRITE };
+
+struct ResourceState {
+  LockMode mode = UNLOCKED;
+  int active_readers = 0;
+  std::condition_variable cv;
 };
 
-std::unordered_map<std::string, LockState> lock_table;
-std::mutex table_mtx;
+class LockManager {
+private:
+  std::unordered_map<std::string, ResourceState> resources;
+  std::mutex global_mutex;
 
-std::deque<std::pair<std::string, std::string>> response_queue;
-std::mutex queue_mtx;
+public:
+  void acquire(const std::string &resource, const std::string &mode) {
+    std::unique_lock<std::mutex> lock(global_mutex);
 
-void enqueue_response(const std::string &client_id,
-                      const std::string &payload) {
-  std::lock_guard<std::mutex> lk(queue_mtx);
-  response_queue.push_back({client_id, payload});
-}
+    // Ensure resource entry exists
+    ResourceState &state = resources[resource];
 
-std::string trim(const std::string &s) {
-  size_t a = s.find_first_not_of(' ');
+    if (mode == "WRITE") {
+      // Writers wait for EVERYTHING to be clear
+      state.cv.wait(lock, [&state] { return state.mode == UNLOCKED; });
+      state.mode = WRITE;
+    } else if (mode == "READ") {
+      // Readers wait only if there is a WRITER
+      state.cv.wait(lock, [&state] { return state.mode != WRITE; });
+      state.mode = READ;
+      state.active_readers++;
+    }
+    std::cout << "[LOG] Locked " << resource << " in " << mode << " mode."
+              << std::endl;
+  }
 
-  if (a == std::string::npos)
-    return "";
+  void release(const std::string &resource) {
+    std::unique_lock<std::mutex> lock(global_mutex);
+    if (resources.find(resource) == resources.end())
+      return;
 
-  size_t b = s.find_last_not_of(' ');
-
-  return s.substr(a, b - a + 1);
-}
-
-struct WorkerInfo {
-  std::string client_id;
-  zmq::socket_t socket;
-};
-
-void worker_thread(zmq::context_t *ctx, std::string endpoint,
-                   std::string client_id) {
-  zmq::socket_t pair(*ctx, zmq::socket_type::pair);
-  pair.connect(endpoint);
-
-  while (true) {
-    zmq::message_t msg;
-    // Receive request from Main thread (forwarded from Client)
-    pair.recv(msg, zmq::recv_flags::none);
-    std::string payload(static_cast<char *>(msg.data()), msg.size());
-
-    // Parse command
-    std::istringstream iss(payload);
-    std::string cmd;
-    iss >> cmd;
-
-    if (cmd.empty()) {
-      enqueue_response(client_id, "ERROR empty_command");
-    } else if (cmd == "ACQUIRE") {
-      std::string resource;
-      iss >> resource;
-
-      if (resource.empty()) {
-        enqueue_response(client_id, "ERROR missing_resource");
-      } else {
-        std::unique_lock<std::mutex> lk(table_mtx);
-        auto &ls = lock_table[resource];
-
-        if (!ls.locked) {
-          ls.locked = true;
-          ls.owner = client_id;
-          enqueue_response(client_id, "GRANTED " + resource);
-        } else {
-          // Blocked: Add to waiters. Do NOT send a response yet.
-          ls.waiters.push_back(client_id);
-          std::cerr << "Queued client [" << client_id << "] for " << resource
-                    << "\n";
-        }
-      }
-    } else if (cmd == "RELEASE") {
-      std::string resource;
-      iss >> resource;
-      std::unique_lock<std::mutex> lk(table_mtx);
-      auto it = lock_table.find(resource);
-
-      if (it == lock_table.end() || !it->second.locked ||
-          it->second.owner != client_id) {
-        // Not locked or not owner -> OK (idempotent)
-        enqueue_response(client_id, "OK " + resource);
-      } else {
-        // Release lock
-        LockState &ls = it->second;
-
-        if (!ls.waiters.empty()) {
-          // Hand over to next waiter
-          std::string next_client = ls.waiters.front();
-          ls.waiters.pop_front();
-          ls.owner = next_client;
-          // Notify the RELEASER
-          enqueue_response(client_id, "OK " + resource);
-          // Notify the WAITER (Async)
-          enqueue_response(next_client, "GRANTED " + resource);
-        } else {
-          // Fully unlock
-          ls.locked = false;
-          ls.owner.clear();
-          enqueue_response(client_id, "OK " + resource);
-        }
-      }
-    } else if (cmd == "WRITE") {
-      std::string resource;
-      iss >> resource;
-      std::string rest;
-      std::getline(iss, rest);
-      std::string value = trim(rest);
-
-      std::unique_lock<std::mutex> lk(table_mtx);
-      auto &ls = lock_table[resource];
-
-      if (!ls.locked || ls.owner != client_id) {
-        enqueue_response(client_id, "ERROR not_owner");
-      } else {
-        ls.value = value;
-        enqueue_response(client_id, "OK");
-      }
-    } else if (cmd == "READ") {
-      std::string resource;
-      iss >> resource;
-      std::unique_lock<std::mutex> lk(table_mtx);
-      // Allow reading if it exists (even if locked by someone else, typically
-      // allowed in simple KV) Or enforce lock ownership. Code below allows read
-      // if key exists.
-      if (lock_table.find(resource) == lock_table.end()) {
-        enqueue_response(client_id, "VALUE ");
-      } else {
-        enqueue_response(client_id, "VALUE " + lock_table[resource].value);
-      }
-    } else {
-      enqueue_response(client_id, "ERROR unknown_command");
+    ResourceState &state = resources[resource];
+    if (state.mode == WRITE) {
+      state.mode = UNLOCKED;
+    } else if (state.mode == READ) {
+      state.active_readers--;
+      if (state.active_readers == 0)
+        state.mode = UNLOCKED;
     }
 
-    // Signal Main thread that we are done processing this message
-    // (Actual payloads are in the response_queue)
-    std::string ack = "ACK";
-    pair.send(zmq::buffer(ack), zmq::send_flags::none);
+    std::cout << "[LOG] Released " << resource << std::endl;
+
+    // Wake up everyone waiting on this resource
+    state.cv.notify_all();
+  }
+};
+
+LockManager lock_manager;
+
+// --- WORKER THREAD ---
+// Handles logic for ONE specific client.
+void worker_thread(zmq::context_t *ctx, std::string worker_identity) {
+  zmq::socket_t socket(*ctx, zmq::socket_type::dealer);
+
+  // IDENTITY MUST BE SET BEFORE CONNECTING
+  socket.set(zmq::sockopt::routing_id, worker_identity);
+  socket.connect("inproc://backend");
+
+  while (true) {
+    // 1. Receive Request: [Client_ID][Empty][Payload]
+    zmq::message_t client_id_msg, empty_msg, payload_msg;
+
+    try {
+      auto res = socket.recv(client_id_msg, zmq::recv_flags::none);
+      if (!res)
+        break; // Interrupted
+      socket.recv(empty_msg, zmq::recv_flags::none);
+      socket.recv(payload_msg, zmq::recv_flags::none);
+    } catch (...) {
+      break;
+    }
+
+    std::string req_str(static_cast<char *>(payload_msg.data()),
+                        payload_msg.size());
+    std::stringstream ss(req_str);
+    std::string command, resource, mode;
+    ss >> command >> resource >> mode;
+
+    std::string reply_str = "ERROR";
+
+    if (command == "LOCK") {
+      // This call BLOCKS if the lock is busy.
+      // Only this thread blocks; the Main Thread keeps running.
+      lock_manager.acquire(resource, mode);
+      reply_str = "OK";
+    } else if (command == "UNLOCK") {
+      lock_manager.release(resource);
+      reply_str = "OK";
+    }
+
+    // 2. Send Reply: [Client_ID][Empty][Reply]
+    socket.send(client_id_msg, zmq::send_flags::sndmore);
+    socket.send(empty_msg, zmq::send_flags::sndmore);
+    socket.send(zmq::buffer(reply_str), zmq::send_flags::none);
   }
 }
 
-// --- Main Thread ---
+// --- MAIN THREAD ---
+// Async Router. Never blocks.
 int main() {
   zmq::context_t ctx(1);
-  zmq::socket_t router(ctx, zmq::socket_type::router);
-  router.bind("tcp://*:5555");
-  std::cerr << "Lock Server started on tcp://*:5555 (Thread Affinity Mode)\n";
 
-  std::unordered_map<std::string, WorkerInfo *> affinity;
+  // Frontend: TCP facing Clients
+  zmq::socket_t frontend(ctx, zmq::socket_type::router);
+  frontend.bind("tcp://*:5555");
+
+  // Backend: In-process facing Workers
+  zmq::socket_t backend(ctx, zmq::socket_type::router);
+  backend.bind("inproc://backend");
+
+  std::cout << "Lock Server started on tcp://*:5555" << std::endl;
+
+  std::unordered_map<std::string, std::string> affinity;
   int worker_count = 0;
 
+  zmq::pollitem_t items[] = {{frontend, 0, ZMQ_POLLIN, 0},
+                             {backend, 0, ZMQ_POLLIN, 0}};
+
   while (true) {
-    zmq::message_t client_id_msg;
-    zmq::message_t empty;
-    zmq::message_t payload_msg;
+    zmq::poll(items, 2, -1);
 
-    // 1. Receive from Client (ROUTER)
-    if (!router.recv(client_id_msg, zmq::recv_flags::none))
-      continue;
-    router.recv(empty, zmq::recv_flags::none);
-    router.recv(payload_msg, zmq::recv_flags::none);
+    // --- MSG FROM CLIENT ---
+    if (items[0].revents & ZMQ_POLLIN) {
+      zmq::message_t client_id, empty, payload;
+      frontend.recv(client_id, zmq::recv_flags::none);
+      frontend.recv(empty, zmq::recv_flags::none);
+      frontend.recv(payload, zmq::recv_flags::none);
 
-    std::string client_id(static_cast<char *>(client_id_msg.data()),
-                          client_id_msg.size());
-    std::string payload(static_cast<char *>(payload_msg.data()),
-                        payload_msg.size());
+      std::string client_str(static_cast<char *>(client_id.data()),
+                             client_id.size());
 
-    // 2. Route to Worker
-    if (affinity.find(client_id) == affinity.end()) {
-      // Create new worker thread for this client
-      std::string endpoint =
-          "inproc://worker-" + std::to_string(worker_count++);
-      auto *info =
-          new WorkerInfo{client_id, zmq::socket_t(ctx, zmq::socket_type::pair)};
-      info->socket.bind(endpoint);
-      affinity[client_id] = info;
+      // If this is a new client, spawn a worker
+      if (affinity.find(client_str) == affinity.end()) {
+        std::string worker_id = "worker-" + std::to_string(++worker_count);
+        affinity[client_str] = worker_id;
 
-      // Launch thread
-      std::thread(worker_thread, &ctx, endpoint, client_id).detach();
-      std::cerr << "Spawned worker for new client: " << client_id << "\n";
+        std::thread(worker_thread, &ctx, worker_id).detach();
+        std::cout << "Spawned " << worker_id << " for new client." << std::endl;
+
+        // --- THE FIX: WAIT FOR CONNECTION ---
+        // Give the new thread 100ms to start and connect to 'inproc://backend'.
+        // Without this, the server sends the message into the void.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+
+      std::string target_worker = affinity[client_str];
+
+      // Forward to Backend: [Worker_ID][Client_ID][Empty][Payload]
+      // Router removes [Worker_ID] and sends the rest to the Dealer.
+      backend.send(zmq::buffer(target_worker), zmq::send_flags::sndmore);
+      backend.send(client_id, zmq::send_flags::sndmore);
+      backend.send(empty, zmq::send_flags::sndmore);
+      backend.send(payload, zmq::send_flags::none);
     }
 
-    // Forward payload to worker
-    affinity[client_id]->socket.send(zmq::buffer(payload),
-                                     zmq::send_flags::none);
+    // --- MSG FROM WORKER ---
+    if (items[1].revents & ZMQ_POLLIN) {
+      zmq::message_t worker_id, client_id, empty, reply;
 
-    // 3. Wait for Worker ACK
-    // This ensures the worker has finished touching the global state/queue
-    // before we try to send replies.
-    zmq::message_t ack_msg;
-    affinity[client_id]->socket.recv(ack_msg, zmq::recv_flags::none);
+      // Backend adds Worker_ID frame on receive
+      backend.recv(worker_id, zmq::recv_flags::none);
+      backend.recv(client_id, zmq::recv_flags::none);
+      backend.recv(empty, zmq::recv_flags::none);
+      backend.recv(reply, zmq::recv_flags::none);
 
-    // 4. Flush Response Queue
-    // Send ANY waiting messages to ANY clients (e.g., RELEASE might trigger a
-    // GRANTED for another client)
-    std::lock_guard<std::mutex> lk(queue_mtx);
-    while (!response_queue.empty()) {
-      auto resp = response_queue.front();
-      response_queue.pop_front();
-
-      // Router send: [Identity][Empty][Payload]
-      router.send(zmq::buffer(resp.first), zmq::send_flags::sndmore);
-      router.send(zmq::message_t(), zmq::send_flags::sndmore);
-      router.send(zmq::buffer(resp.second), zmq::send_flags::none);
+      // Forward to Frontend: [Client_ID][Empty][Reply]
+      frontend.send(client_id, zmq::send_flags::sndmore);
+      frontend.send(empty, zmq::send_flags::sndmore);
+      frontend.send(reply, zmq::send_flags::none);
     }
   }
-
   return 0;
 }
