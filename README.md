@@ -83,7 +83,7 @@ RELEASING lock for resource: file_A
 UNLOCKED file_A
 ```
 
-**Terminal 3**: Starts the server in the background
+**Terminal 3**: Reader attempts lock, blocks until Writer releases, then reads the written data.
 
 ```bash
 $ ./lock_client file_A READ
